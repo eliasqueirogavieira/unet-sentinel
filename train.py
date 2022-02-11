@@ -4,6 +4,7 @@
 from dataset import SegmentationDataset
 from model import UNet
 import config
+import loss
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -15,6 +16,30 @@ import matplotlib.pyplot as plt
 import torch
 import time
 import os
+
+def check_accuracy(loader, model, device="cuda"):
+	num_correct = 0
+	num_pixels = 0
+	dice_score = 0
+	model.eval()
+
+	with torch.no_grad():
+			for x, y in loader:
+				x = x.to(device)
+				y = y.to(device).unsqueeze(1)
+				preds = torch.sigmoid(model(x))
+				preds = (preds > 0.5).float()
+				num_correct += (preds == y).sum()
+				num_pixels += torch.numel(preds)
+				dice_score += (2 * (preds * y).sum()) / (
+					(preds + y).sum() + 1e-8
+				)
+
+	print(
+        f"Got {num_correct}/{num_pixels} with acc {num_correct/num_pixels*100:.2f}"
+    )
+	print(f"Dice score: {dice_score/len(loader)}")
+	model.train()
 
 # load the image and mask filepaths in a sorted manner
 imagePaths = sorted(list(paths.list_images(config.IMAGE_DATASET_PATH)))
@@ -56,7 +81,7 @@ testLoader = DataLoader(testDS, shuffle=False,
 # initialize our UNet model
 unet = UNet().to(config.DEVICE)
 # initialize loss function and optimizer
-lossFunc = -()
+lossFunc = BCEWithLogitsLoss()
 opt = Adam(unet.parameters(), lr=config.INIT_LR)
 # calculate steps per epoch for training and test set
 trainSteps = len(trainDS) // config.BATCH_SIZE
@@ -112,6 +137,7 @@ for e in tqdm(range(config.NUM_EPOCHS)):
 endTime = time.time()
 print("[INFO] total time taken to train the model: {:.2f}s".format(
 	endTime - startTime))
+#check_accuracy(testLoader, unet, config.DEVICE)
 
 # plot the training loss
 plt.style.use("ggplot")

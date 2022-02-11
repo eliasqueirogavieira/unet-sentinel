@@ -22,7 +22,7 @@ class Block(Module):
 		return self.conv2(self.relu(self.conv1(x)))
 
 class Encoder(Module):
-	def __init__(self, channels=(3, 16, 32, 64)):
+	def __init__(self, channels=(4, 16, 32, 64)):
 		super().__init__()
 		# store the encoder blocks and maxpooling layer
 		self.encBlocks = ModuleList(
@@ -77,7 +77,7 @@ class Decoder(Module):
 		return encFeatures
 
 class UNet(Module):
-	def __init__(self, encChannels=(3, 16, 32, 64),
+	def __init__(self, encChannels=(4, 16, 32, 64),
 		 decChannels=(64, 32, 16),
 		 nbClasses=1, retainDim=True,
 		 outSize=(config.INPUT_IMAGE_HEIGHT,  config.INPUT_IMAGE_WIDTH)):
