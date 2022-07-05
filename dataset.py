@@ -1,12 +1,14 @@
 # import the necessary packages
+from lib2to3.pytree import convert
 from torchvision import transforms
 from torch.utils.data import Dataset
 import cv2
 from osgeo import gdal
+import torch
 from PIL import Image
 import numpy as np
 class SegmentationDataset(Dataset):
-	def __init__(self, imagePaths, maskPaths, transforms):
+	def __init__(self, imagePaths, maskPaths, transforms=None):
 		# store the image and mask filepaths, and augmentation
 		# transforms
 		self.imagePaths = imagePaths
@@ -28,14 +30,16 @@ class SegmentationDataset(Dataset):
 			arr.append(im1.GetRasterBand(i).ReadAsArray())
 		im1 = None
 		im2 = np.array(arr).transpose(1, 2, 0)
-		im2 = Image.fromarray(np.uint8(im2 * 255))
+		#im2 = Image.fromarray(np.uint8(im2 * 255))
 		convert_tensor = transforms.ToTensor()
 		image = convert_tensor(im2)
 		mask = cv2.imread(self.maskPaths[idx], 0)
-		# check to see if we are applying any transformations
+		mask = convert_tensor(mask)
+		# return a tuple of the image and its mask
 		if self.transforms is not None:
 			# apply the transformations to both image and its mask
-			image = self.transforms(image)
-			mask = self.transforms(mask)
-		# return a tuple of the image and its mask
+			data = torch.cat([image, mask])
+			data_transformed = self.transforms(data)
+			image = data_transformed[:4]
+			mask = data_transformed[4:]
 		return (image, mask)
