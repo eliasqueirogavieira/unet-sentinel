@@ -6,10 +6,10 @@ import numpy as np
 from osgeo import gdal
 from pathlib import Path
 from matplotlib import pyplot as plt
-coco = COCO("/home/eliasqueiroga/Documents/unet/dataset/test.json")
-save_folder = "/home/eliasqueiroga/Documents/unet/dataset/test/masks3/"
-
-for j in range(1,101):
+coco = COCO("/home/eliasqueiroga/Documents/unet-sentinel/dataset/seg/train.json")
+save_folder = "/home/eliasqueiroga/Documents/unet-sentinel/dataset/seg/train/masks/"
+NUM_IMAGENS = 24170
+for j in range(1,NUM_IMAGENS + 1):
     image_id = j
     img = coco.imgs[image_id]
     cat_ids = coco.getCatIds()
@@ -20,10 +20,11 @@ for j in range(1,101):
     mask = coco.annToMask(anns[0])
     for i in range(len(anns)):
         mask += coco.annToMask(anns[i])
-    mask = Image.fromarray(np.uint8(mask * 255))
+    mask = (mask>0)*255
+    mask = Image.fromarray(np.uint8(mask))
     mask.save(save_folder + image_name + '.png')
-path = Path("/home/eliasqueiroga/Documents/unet/dataset/test/images3/") 
+path = Path("/home/eliasqueiroga/Documents/unet-sentinel/dataset/test/images/") 
 for x in path.iterdir():
     print(x)
-#arr = os.listdir("/home/eliasqueiroga/Documents/unet/dataset/test/images3/")
-#print(arr)
+arr = os.listdir("/home/eliasqueiroga/Documents/unet-sentinel/dataset/test/images/")
+print(arr)

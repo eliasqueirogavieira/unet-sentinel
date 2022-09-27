@@ -3,148 +3,69 @@
 # import the necessary packages
 from dataset import SegmentationDataset
 from model import UNet
+from utils import *
 import config
-import loss
-from torch.nn import BCEWithLogitsLoss
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from sklearn.model_selection import train_test_split
-from torchvision import transforms
 from imutils import paths
 from tqdm import tqdm
-#import matplotlib.pyplot as plt
+import glob
 import torch
-from torch import nn, threshold
 import logging
 import time
-from torchmetrics.functional import precision_recall
-import os
-import numpy as np
+import re
 from pathlib import Path
+from augmentations import build_augmentations
+from sklearn.model_selection import train_test_split
+import pytorch_model_summary
 
 logging.basicConfig(filename='treino.log', encoding='utf-8', level=logging.DEBUG)
-CHECKPOINT_INTERVAL = 50
-ONE_FACTOR = 0.34
 
-def dynamic_bce(pred, y):
-	pred_linear = torch.reshape(pred, (-1, ))
-	y_linear = torch.reshape(y, (-1, ))
-	positive_indexes = torch.where(y_linear==1)[0]
-	num_positive = positive_indexes.shape[0]
-	num_negative = pred_linear.shape[0] - num_positive
-	ones_weight = num_negative*ONE_FACTOR/(num_positive+1)
-	#logging.debug('Peso: %f', ones_weight)
-	pos_weight = torch.ones_like(y_linear)
-	pos_weight[positive_indexes] = ones_weight
-	lossFunc = BCEWithLogitsLoss(pos_weight=pos_weight)
-	loss = lossFunc(pred_linear, y_linear)
-	return loss
+trainImages = sorted(list(paths.list_images(config.TRAIN_IMAGES_FOLDER)))
+trainMasks = sorted(list(paths.list_images(config.TRAIN_MASKS_FOLDER)))
+validationImages = sorted(list(paths.list_images(config.VAL_IMAGES_FOLDER)))
+validationMasks = sorted(list(paths.list_images(config.VAL_MASKS_FOLDER)))
 
-def dice_loss(pred, y, epsilon=1e-6):        
-
-	#pred = torch.sigmoid(pred)  
-	
-	pred = pred.view(-1)
-	y = y.view(-1)
-	
-	intersection = (pred * y).sum()                            
-	dice = (2.*intersection + epsilon)/(pred.sum() + y.sum() + epsilon)  
-
-	return 1 - dice
-
-def iou_loss(pred, y, epsilon=1e-6):
-	
-	#comment out if your model contains a sigmoid or equivalent activation layer
-	#pred = torch.sigmoid(pred)       
-	
-	#flatten label and prediction tensors
-	pred = pred.view(-1)
-	y = y.view(-1)
-	
-	#intersection is equivalent to True Positive count
-	#union is the mutually inclusive area of all labels & predictions 
-	intersection = (pred * y).sum()
-	total = (pred + y).sum()
-	union = total - intersection 
-	
-	IoU = (intersection + epsilon)/(union + epsilon)
-			
-	return 1 - IoU
-
-""" class ComboLoss(nn.Module):
-	def __init__(self, weight=None, size_average=True):
-		super(ComboLoss, self).__init__()
-
-	def forward(self, inputs, targets, smooth=1, eps=1e-9):
-		
-		#PyTorch
-		ALPHA = 0.5 # < 0.5 penalises FP more, > 0.5 penalises FN more
-		CE_RATIO = 0.5 #weighted contribution of modified CE loss compared to Dice loss
-
-		#flatten label and prediction tensors
-		inputs = inputs.view(-1)
-		targets = targets.view(-1)
-
-		#True Positives, False Positives & False Negatives
-		intersection = (inputs * targets).sum()    
-		dice = (2. * intersection + smooth) / (inputs.sum() + targets.sum() + smooth)
-
-		inputs = torch.clamp(inputs, eps, 1.0 - eps)       
-		#out = - (ALPHA * ((targets * torch.log(inputs)) + ((1 - ALPHA) * (1.0 - targets) * torch.log(1.0 - inputs))))
-		out = dynamic_bce(targets, inputs)
-		weighted_ce = out.mean(-1)
-		combo = (CE_RATIO * weighted_ce) - ((1 - CE_RATIO) * dice)
-        
-		return combo """
-
-# load the image and mask filepaths in a sorted manner
-trainPaths = sorted(list(paths.list_images(config.IMAGE_DATASET_PATH)))
-trainMaskPaths = sorted(list(paths.list_images(config.MASK_DATASET_PATH)))
-# partition the data into training and testing splits using 85% of
-# the data for training and the remaining 15% for testing
-split = train_test_split(trainPaths, trainMaskPaths,
-	test_size=config.TEST_SPLIT, random_state=42)
-# unpack the data split
-(trainImages, testImages) = split[:2]
-(trainMasks, testMasks) = split[2:]
-# write the testing image paths to disk so that we can use then
-# when evaluating/testing our model
-print("[INFO] saving testing image paths...")
-f = open(config.TEST_PATHS, "w")
-f.write("\n".join(testImages))
-f.close()
+# # load the image and mask filepaths in a sorted manner
+# imagePaths = sorted(list(paths.list_images(config.ALL_IMAGES_PATH)))
+# maskPaths = sorted(list(paths.list_images(config.ALL_MASKS_PATH)))
+# # partition the data into training and validation splits using 80% of
+# # the data for training and the remaining 20% for validate
+# split = train_test_split(imagePaths, maskPaths,
+# 	test_size=config.VALIDATION_SPLIT, random_state=42)
+# # unpack the data split
+# (trainImages, validationImages) = split[:2]
+# (trainMasks, validationMasks) = split[2:]
+# # write the validation image paths to disk so that we can use then
+# # when evaluating/validate our model
+# print("[INFO] saving validation image paths...")
+# f = open(config.VALIDATION_PATHS, "w")
+# f.write("\n".join(validationImages))
+# f.close()
 
 # define transformations
-transforms = transforms.Compose(
-        [transforms.RandomVerticalFlip(p=0.2),
-		 transforms.RandomHorizontalFlip(p=0.2)
-		])
 
+transforms = build_augmentations()
 
-# create the train and test datasets
+# create the train and validation datasets
 trainDS = SegmentationDataset(imagePaths=trainImages, maskPaths=trainMasks, transforms=transforms)
-testDS = SegmentationDataset(imagePaths=testImages, maskPaths=testMasks, transforms=transforms)
+validationDS = SegmentationDataset(imagePaths=validationImages, maskPaths=validationMasks, transforms=transforms)
 print(f"[INFO] found {len(trainDS)} examples in the training set...")
-print(f"[INFO] found {len(testDS)} examples in the test set...")
-# create the training and test data loaders
+print(f"[INFO] found {len(validationDS)} examples in the validation set...")
+# create the training and validation data loaders
 trainLoader = DataLoader(trainDS, shuffle=True,
 	batch_size=config.BATCH_SIZE, pin_memory=config.PIN_MEMORY,
-	num_workers=os.cpu_count())
-testLoader = DataLoader(testDS, shuffle=False,
+	num_workers=config.NUM_THREADS)
+validationLoader = DataLoader(validationDS, shuffle=False,
 	batch_size=config.BATCH_SIZE, pin_memory=config.PIN_MEMORY,
-	num_workers=os.cpu_count())
+	num_workers=config.NUM_THREADS)
 
-# initialize our UNet model
-unet = UNet().to(config.DEVICE)
-# initialize loss function and optimizer
-#pos_weight = torch.ones((512, 512), dtype=torch.float64) * 1.7437
-opt = Adam(unet.parameters(), lr=config.INIT_LR)
-# calculate steps per epoch for training and test set
-trainSteps = len(trainDS) // config.BATCH_SIZE
-testSteps = len(testDS) // config.BATCH_SIZE
+# calculate steps per epoch for training and validation set
+train_steps = len(trainDS) // config.BATCH_SIZE
+validation_steps = len(validationDS) // config.BATCH_SIZE
 # initialize a dictionary to store training history
-H = {"train_loss": [], "test_loss": []}
+H = {"train_loss": [], "val_loss": []}
 logging.info('Novo treinamento')	
 # loop over epochs
 print("[INFO] training the network...")
@@ -153,24 +74,46 @@ writer = SummaryWriter(config.BASE_OUTPUT)
 cont_iter = 0
 cont_val_iter = 0
 
-checkpoint_path = Path(config.BASE_OUTPUT) / 'checkpoints'
-checkpoint_path.mkdir(exist_ok=True)
+all_checkpoints = glob.glob(str(config.CHECKPOINT_PATH) + '/*')
+if len(all_checkpoints):
+	sort_checkpoints = sorted(all_checkpoints, reverse=True)
+	last_checkpoint = sort_checkpoints[0]
+	unet = torch.load(last_checkpoint)
+	last_epoch = int(re.findall(r'\d+', last_checkpoint)[0])
+else:
+	unet = UNet(encChannels=config.ENC_CHANNELS,decChannels=config.DEC_CHANNELS).to(config.DEVICE)
+	last_epoch = 0
 
-for e in tqdm(range(config.NUM_EPOCHS)):
+#opt = Adam(unet.parameters(), lr=config.INIT_LR)
+opt = AdamW(unet.parameters(), lr=config.INIT_LR)
+
+if Path(config.OPTIMIZER_FILE).exists():
+	opt = opt.load_state_dict(config.OPTIMIZER_FILE)
+
+config.CHECKPOINT_PATH.mkdir(exist_ok=True)
+early_stopping = EarlyStopping(patience=config.PATIENCE, verbose=True)
+print(pytorch_model_summary.summary(UNet(encChannels=config.ENC_CHANNELS, decChannels=config.DEC_CHANNELS), torch.zeros(1, 2, 512, 512)))
+
+for e in tqdm(range(config.NUM_EPOCHS), initial=last_epoch):
 	# set the model in training mode
 	unet.train()
 	# initialize the total training and validation loss
-	totalTrainLoss = 0
-	totalTestLoss = 0
-	totalPrecision = 0
-	totalRecall = 0
+	total_train_loss = 0
+	total_val_loss = 0
+	total_val_precision = 0
+	total_train_recall = 0
+	total_train_precision = 0
+	total_val_recall = 0
+	total_train_f1 = 0
+	total_val_f1 = 0
 	# loop over the training set
 	for (i, (x, y)) in enumerate(trainLoader):
 		# send the input to the device
 		(x, y) = (x.to(config.DEVICE), y.to(config.DEVICE))
 		# perform a forward pass and calculate the training loss
 		pred = unet(x)
-		loss = dynamic_bce(pred, y)
+		loss = bce_with_logits_loss(pred, y)
+		#loss = dynamic_bce(pred, y)
 		if torch.isnan(loss) or torch.isinf(loss):
 			print(pred.min().item())
 			print(pred.max().item())
@@ -183,14 +126,21 @@ for e in tqdm(range(config.NUM_EPOCHS)):
 		opt.step()
 		arr_gradmax = []
 		arr_gradmin = []
+		precision, recall, f1 = get_metrics(pred, y)
+		total_train_precision += precision
+		total_train_recall += recall
+		total_train_f1 += f1
 		# add the loss to the total training loss so far
 		if cont_iter % 50 == 0:
-			writer.add_scalar('train/iteration_loss', loss, cont_iter)
+			log_tsb_scalars(writer, 'train/iteration', loss, precision, recall, f1, cont_iter)
+			log_tsb_images(writer, 'train/images', torch.sigmoid(pred[0]), y[0], cont_iter)			
 		cont_iter += 1
-		totalTrainLoss += loss
+		total_train_loss += loss
 	# switch off autograd
-	if e % CHECKPOINT_INTERVAL == 0:
-		torch.save(unet, config.BASE_OUTPUT + '/checkpoints/epoch{:02d}.pth'.format(e))
+	if (e+1) % config.CHECKPOINT_INTERVAL == 0:
+		torch.save(unet, str(config.CHECKPOINT_FILE).format(e))
+		optimizer_state_dict = opt.state_dict()
+		torch.save(optimizer_state_dict, config.OPTIMIZER_FILE)
 
 	grad_log = list(map(lambda v: v.grad.cpu().numpy(), unet.parameters()))
 	for k in range(len(grad_log)):
@@ -205,45 +155,49 @@ for e in tqdm(range(config.NUM_EPOCHS)):
 		# set the model in evaluation mode
 		unet.eval()
 		# loop over the validation set
-		for (x, y) in testLoader:
+		for (x, y) in validationLoader:
 			# send the input to the device
 			(x, y) = (x.to(config.DEVICE), y.to(config.DEVICE))
 			# make the predictions and calculate the validation loss
 			pred = unet(x)
-			loss = dynamic_bce(pred, y)
-			totalTestLoss += loss
+			loss = bce_with_logits_loss(pred, y)
+			#loss = dynamic_bce(pred, y)
+			precision, recall, f1 = get_metrics(pred, y)
+			total_val_precision += precision
+			total_val_recall += recall
+			total_val_f1 += f1
 			if cont_val_iter % 50 == 0:
-				writer.add_scalar('test/iteration_loss', loss, cont_val_iter)
+				log_tsb_scalars(writer, 'val/iteration', loss, precision, recall, f1, cont_val_iter)
+				log_tsb_images(writer, 'val/images', torch.sigmoid(pred[0]), y[0], cont_val_iter)			
 			cont_val_iter += 1
+			total_val_loss += loss
 
 
 	# calculate the average training and validation loss
-	avgTrainLoss = totalTrainLoss / trainSteps
-	writer.add_scalar('train/epoch_loss', avgTrainLoss, e)
-	avgTestLoss = totalTestLoss / testSteps
-	writer.add_scalar('test/epoch_loss', avgTestLoss, e)
-	# update our training history
-	H["train_loss"].append(avgTrainLoss.cpu().detach().numpy())
-	H["test_loss"].append(avgTestLoss.cpu().detach().numpy())
+	avg_train_loss = total_train_loss / train_steps
+	avg_train_precision = total_train_precision / train_steps
+	avg_train_recall = total_train_recall / train_steps
+	avg_train_f1 = total_train_f1 / train_steps
+	log_tsb_scalars(writer, 'train/epoch', avg_train_loss, avg_train_precision, avg_train_recall, avg_train_f1, e)
+	
+	avg_val_loss = total_val_loss / validation_steps
+	avg_val_precision = total_val_precision / validation_steps
+	avg_val_recall = total_val_recall / validation_steps
+	avg_val_f1 = total_val_f1 / validation_steps
+	log_tsb_scalars(writer, 'val/epoch', avg_val_loss, avg_val_precision, avg_val_recall, avg_val_f1, e)
 	# print the model training and validation information
 	print("[INFO] EPOCH: {}/{}".format(e + 1, config.NUM_EPOCHS))
-	print("Train loss: {:.6f}, Test loss: {:.4f}".format(
-		avgTrainLoss, avgTestLoss))
+	print("Train loss: {:.6f}, Validation loss: {:.4f}".format(
+		avg_train_loss, avg_val_loss))
+	early_stopping(avg_val_loss, unet)
+        
+	if early_stopping.early_stop:
+		print("Early stopping")
+		break
 # display the total time needed to perform the training
 endTime = time.time()
 print("[INFO] total time taken to train the model: {:.2f}s".format(
 	endTime - startTime))
-#check_accuracy(testLoader, unet, config.DEVICE)
 
-# plot the training loss
-""" plt.style.use("ggplot")
-plt.figure()
-plt.plot(H["train_loss"], label="train_loss")
-plt.plot(H["test_loss"], label="test_loss")
-plt.title("Training Loss on Dataset")
-plt.xlabel("Epoch #")
-plt.ylabel("Loss")
-plt.legend(loc="lower left")
-plt.savefig(config.PLOT_PATH) """
 # serialize the model to disk
 torch.save(unet, config.MODEL_PATH)

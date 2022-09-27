@@ -26,20 +26,21 @@ class SegmentationDataset(Dataset):
 		#image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 		im1 = gdal.Open(imagePath)
 		arr = []
-		for i in range(1, 5):
+		for i in range(1, 3):
 			arr.append(im1.GetRasterBand(i).ReadAsArray())
 		im1 = None
-		im2 = np.array(arr).transpose(1, 2, 0)
+		image = (np.array(arr)/255).astype(np.float32)
 		#im2 = Image.fromarray(np.uint8(im2 * 255))
-		convert_tensor = transforms.ToTensor()
-		image = convert_tensor(im2)
+		#convert_tensor = transforms.ToTensor()
+		#image = convert_tensor(im2)
 		mask = cv2.imread(self.maskPaths[idx], 0)
-		mask = convert_tensor(mask)
+		mask = (mask / mask.max()).astype(np.float32)
+		#mask = convert_tensor(mask)
 		# return a tuple of the image and its mask
 		if self.transforms is not None:
 			# apply the transformations to both image and its mask
-			data = torch.cat([image, mask])
-			data_transformed = self.transforms(data)
-			image = data_transformed[:4]
-			mask = data_transformed[4:]
+			image = image.transpose(1, 2, 0)
+			transformed = self.transforms(image=image, mask=mask)
+			image = transformed["image"]
+			mask = transformed["mask"]
 		return (image, mask)
