@@ -16,6 +16,7 @@ The Dataset was composed of clippings from larger TIFF images of different regio
 - 1110 training samples, 207 validation samples and 137 test samples.
 - All samples had 512x512 resolution. 
 - All augmentations used are listed in augmentations.py
+
 All the images were provided by Brazilian Ministry of Defense in a collaboration with Universidade de Brasília (UnB).
 ## Hyperparameters
 - Encoder channels: 2, 16, 32, 64
